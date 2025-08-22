@@ -33,11 +33,13 @@ data/output/frames/
 # Logs
 *.log
 
-# Video downloads
+# Image files
 *.mp4
 *.mkv
 *.avi
 *.MOV
+
+*.png
 
 # Environment files
 

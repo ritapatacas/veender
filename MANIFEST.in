@@ -1,0 +1,7 @@
+include README.md
+include config.yaml
+include requirements.txt
+include LICENSE
+recursive-include data/input/face *
+recursive-include data/input/videos *
+recursive-exclude data/output *
