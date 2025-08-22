@@ -1,0 +1,49 @@
+# Python
+
+**pycache**/
+\*.py\[cod]
+\*\$py.class
+
+# Virtual environment
+
+venv/
+
+# MacOS
+
+.DS\_Store
+
+# Windows
+
+Thumbs.db
+
+# Jupyter Notebook checkpoints
+
+.ipynb\_checkpoints/
+
+# Ignore files inside data/input and data/output, but keep main directories
+
+!data/output/
+!data/output/logs/
+data/output/frames/
+!data/input/face/
+!data/input/videos/
+/data/input/face/
+/data/input/videos/\*
+
+# Logs
+*.log
+
+# Video downloads
+*.mp4
+*.mkv
+*.avi
+*.MOV
+
+# Environment files
+
+\*.env
+
+# PyCharm
+
+.idea/
+\*.iml
