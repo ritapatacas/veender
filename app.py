@@ -9,7 +9,6 @@ import json
 import cv2
 import numpy as np
 import time
-import mediapipe as mp
 from sklearn.metrics.pairwise import cosine_similarity
 
 st.set_page_config(page_title="VEENDER", page_icon="🎥", layout="wide")
@@ -18,16 +17,15 @@ st.markdown("<h1 style='text-align: center;'>VEENDER</h1>", unsafe_allow_html=Tr
 st.markdown("<p style='text-align: center; font-style: italic; margin: 0;'>been there?</p>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; font-size: 1.2em; font-style: bold; margin: 0;'>self stalker - find yourself in a video</b></p>", unsafe_allow_html=True)
 
-st.info("🔧 **Step 3**: Testing MediaPipe face detection + Full pipeline")
+st.info("🔧 **Step 3 Alternative**: Using OpenCV Haar Cascades for face detection (Python 3.13 compatible)")
 
-# Initialize MediaPipe
-@st.cache_resource
-def init_mediapipe():
-    mp_face_detection = mp.solutions.face_detection
-    mp_face_mesh = mp.solutions.face_mesh
-    face_detection = mp_face_detection.FaceDetection(model_selection=1, min_detection_confidence=0.5)
-    face_mesh = mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1, refine_landmarks=True, min_detection_confidence=0.5)
-    return face_detection, face_mesh
+# Initialize session state for UI visibility
+if 'processing' not in st.session_state:
+    st.session_state.processing = False
+
+# Create containers for different states
+input_container = st.container()
+processing_container = st.container()
 
 def test_opencv():
     """Test OpenCV functionality"""
@@ -56,64 +54,74 @@ def test_ytdlp():
     except Exception as e:
         return False, f"yt-dlp test error: {str(e)}"
 
-def test_mediapipe():
-    """Test MediaPipe face detection"""
+def test_face_detection():
+    """Test OpenCV Haar Cascade face detection"""
     try:
-        face_detection, face_mesh = init_mediapipe()
+        # Load the pre-trained Haar Cascade for face detection
+        face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
         
-        # Create a simple test image with a face-like pattern
+        # Create a simple test image with basic shapes
         test_image = np.ones((200, 200, 3), dtype=np.uint8) * 128
         cv2.circle(test_image, (100, 100), 80, (255, 200, 180), -1)  # Face circle
-        cv2.circle(test_image, (80, 80), 8, (0, 0, 0), -1)   # Left eye
-        cv2.circle(test_image, (120, 80), 8, (0, 0, 0), -1)  # Right eye
-        cv2.ellipse(test_image, (100, 120), (20, 10), 0, 0, 180, (0, 0, 0), 2)  # Mouth
         
-        # Test face detection
-        rgb_image = cv2.cvtColor(test_image, cv2.COLOR_BGR2RGB)
-        results = face_detection.process(rgb_image)
+        # Convert to grayscale for detection
+        gray = cv2.cvtColor(test_image, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(gray, 1.1, 4)
         
-        if results.detections:
-            return True, f"MediaPipe detected {len(results.detections)} face(s)"
-        else:
-            return True, "MediaPipe loaded (no faces in test image)"
-            
+        return True, f"OpenCV Haar Cascade loaded successfully"
+        
     except Exception as e:
-        return False, f"MediaPipe error: {str(e)}"
+        return False, f"Face detection error: {str(e)}"
 
-def extract_face_features(image, face_mesh):
-    """Extract face features using MediaPipe"""
-    rgb_image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    results = face_mesh.process(rgb_image)
+@st.cache_resource
+def load_face_cascade():
+    """Load the Haar Cascade face detector"""
+    return cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+
+def extract_face_features(image, face_cascade):
+    """Extract face features using OpenCV Haar Cascades"""
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    faces = face_cascade.detectMultiScale(gray, 1.1, 4)
     
-    if results.multi_face_landmarks:
-        landmarks = results.multi_face_landmarks[0]
-        # Extract key facial landmarks as features
-        features = []
-        for landmark in landmarks.landmark[:468]:  # 468 landmarks
-            features.extend([landmark.x, landmark.y, landmark.z])
-        return np.array(features)
+    if len(faces) > 0:
+        # Take the largest face
+        face = max(faces, key=lambda x: x[2] * x[3])  # largest by area
+        x, y, w, h = face
+        
+        # Extract face region
+        face_roi = gray[y:y+h, x:x+w]
+        
+        # Resize to standard size for comparison
+        face_roi = cv2.resize(face_roi, (100, 100))
+        
+        # Use histogram as features (simple but effective)
+        hist = cv2.calcHist([face_roi], [0], None, [256], [0, 256])
+        return hist.flatten()
+    
     return None
 
 def compare_faces(ref_features, target_features, threshold=0.7):
-    """Compare faces using cosine similarity"""
+    """Compare faces using histogram correlation"""
     if ref_features is None or target_features is None:
         return False
     
-    similarity = cosine_similarity([ref_features], [target_features])[0][0]
+    # Normalize features
+    ref_norm = ref_features / (np.linalg.norm(ref_features) + 1e-6)
+    target_norm = target_features / (np.linalg.norm(target_features) + 1e-6)
+    
+    # Calculate similarity using correlation
+    similarity = np.corrcoef(ref_norm, target_norm)[0, 1]
+    
+    # Handle NaN case
+    if np.isnan(similarity):
+        return False
+    
     return similarity > threshold
-
-# Initialize session state for UI visibility
-if 'processing' not in st.session_state:
-    st.session_state.processing = False
-
-# Create containers for different states
-input_container = st.container()
-processing_container = st.container()
 
 # Test components on app load
 opencv_working, opencv_msg = test_opencv()
 ytdlp_working, ytdlp_msg = test_ytdlp()
-mediapipe_working, mediapipe_msg = test_mediapipe()
+face_detection_working, face_detection_msg = test_face_detection()
 
 col1, col2, col3 = st.columns(3)
 with col1:
@@ -129,10 +137,10 @@ with col2:
         st.error(f"❌ {ytdlp_msg}")
 
 with col3:
-    if mediapipe_working:
-        st.success(f"✅ {mediapipe_msg}")
+    if face_detection_working:
+        st.success(f"✅ {face_detection_msg}")
     else:
-        st.error(f"❌ {mediapipe_msg}")
+        st.error(f"❌ {face_detection_msg}")
 
 # Only show interface if not processing
 if not st.session_state.processing:
@@ -161,10 +169,10 @@ if not st.session_state.processing:
         with col2:
             tolerance = st.slider("🎯 Match tolerance", min_value=0.3, max_value=0.9, value=0.7, help="Recommended: 0.6-0.8")
         
-        # Display uploaded images with MediaPipe face detection
-        if face_files and mediapipe_working:
-            st.subheader("📸 Uploaded Face Images (MediaPipe analysis):")
-            face_detection, face_mesh = init_mediapipe()
+        # Display uploaded images with OpenCV face detection
+        if face_files and face_detection_working:
+            st.subheader("📸 Uploaded Face Images (OpenCV Haar Cascade detection):")
+            face_cascade = load_face_cascade()
             
             cols = st.columns(min(5, len(face_files)))
             for i, face_file in enumerate(face_files):
@@ -172,30 +180,26 @@ if not st.session_state.processing:
                     pil_img = Image.open(face_file)
                     cv_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
                     
-                    # MediaPipe face detection
-                    rgb_img = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
-                    face_results = face_detection.process(rgb_img)
+                    # OpenCV face detection
+                    gray = cv2.cvtColor(cv_img, cv2.COLOR_BGR2GRAY)
+                    faces = face_cascade.detectMultiScale(gray, 1.1, 4)
                     
-                    # Draw face detection
-                    annotated_img = rgb_img.copy()
-                    if face_results.detections:
-                        for detection in face_results.detections:
-                            bbox = detection.location_data.relative_bounding_box
-                            h, w, _ = annotated_img.shape
-                            x = int(bbox.xmin * w)
-                            y = int(bbox.ymin * h)
-                            width = int(bbox.width * w)
-                            height = int(bbox.height * h)
-                            cv2.rectangle(annotated_img, (x, y), (x + width, y + height), (0, 255, 0), 2)
-                            cv2.putText(annotated_img, f"{detection.score[0]:.2f}", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                    # Draw face detection rectangles
+                    annotated_img = cv_img.copy()
+                    for (x, y, w, h) in faces:
+                        cv2.rectangle(annotated_img, (x, y), (x+w, y+h), (0, 255, 0), 2)
+                        cv2.putText(annotated_img, "Face", (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1)
+                    
+                    # Convert back to RGB for display
+                    annotated_rgb = cv2.cvtColor(annotated_img, cv2.COLOR_BGR2RGB)
                     
                     st.image(pil_img, caption=f"Original: {face_file.name}", use_container_width=True)
-                    if face_results.detections:
-                        st.image(annotated_img, caption=f"Faces: {len(face_results.detections)}", use_container_width=True)
+                    if len(faces) > 0:
+                        st.image(annotated_rgb, caption=f"Faces detected: {len(faces)}", use_container_width=True)
                     else:
                         st.warning("No faces detected")
         
-        # YouTube video info (same as Step 2)
+        # YouTube video info
         if youtube_url:
             st.subheader("📹 YouTube Video Info")
             try:
@@ -215,9 +219,9 @@ if not st.session_state.processing:
                 st.error("❌ Could not parse YouTube URL")
         
         # Run button
-        all_systems_working = opencv_working and ytdlp_working and mediapipe_working
+        all_systems_working = opencv_working and ytdlp_working and face_detection_working
         
-        if st.button("🚀 RUN VEENDER (Step 3 - Full Pipeline)", type="primary", use_container_width=True):
+        if st.button("🚀 RUN VEENDER (OpenCV Face Detection)", type="primary", use_container_width=True):
             if not face_files:
                 st.error("⚠️ Please upload at least one face image.")
             elif not youtube_url:
@@ -235,17 +239,17 @@ if not st.session_state.processing:
 # Show processing interface when running (FULL PIPELINE)
 elif st.session_state.processing:
     with processing_container:
-        st.info("🔄 Step 3 processing - Full VEENDER pipeline with MediaPipe face detection!")
+        st.info("🔄 Processing with OpenCV Haar Cascade face detection...")
         
         progress_bar = st.progress(0)
         status_text = st.empty()
         
         try:
-            # Initialize MediaPipe
-            face_detection, face_mesh = init_mediapipe()
+            # Load face cascade
+            face_cascade = load_face_cascade()
             
             # Process reference faces
-            status_text.text("Processing reference faces with MediaPipe...")
+            status_text.text("Processing reference faces with OpenCV...")
             ref_features_list = []
             
             for i, face_file in enumerate(st.session_state.face_files):
@@ -253,7 +257,7 @@ elif st.session_state.processing:
                 pil_image = Image.open(face_file)
                 cv_image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
                 
-                features = extract_face_features(cv_image, face_mesh)
+                features = extract_face_features(cv_image, face_cascade)
                 if features is not None:
                     ref_features_list.append(features)
                     st.success(f"✅ Processed reference face: {face_file.name}")
@@ -332,7 +336,7 @@ elif st.session_state.processing:
                         
                         if frame_number % st.session_state.skip == 0:
                             # Extract features from current frame
-                            frame_features = extract_face_features(frame, face_mesh)
+                            frame_features = extract_face_features(frame, face_cascade)
                             
                             if frame_features is not None:
                                 # Compare with reference
@@ -387,4 +391,4 @@ elif st.session_state.processing:
                 st.rerun()
 
 st.markdown("---")
-st.markdown("**Step 3**: Full VEENDER pipeline with MediaPipe face detection - COMPLETE FUNCTIONALITY!")
+st.markdown("**Step 3 Alternative**: Full VEENDER pipeline with OpenCV Haar Cascades (Python 3.13 compatible)")
