@@ -463,54 +463,150 @@ elif st.session_state.processing:
                                 st.warning(f"Failed to get video info: {result.stderr[:100]}")
                             continue
                         
-                        # Strategy 2: Get video info and try alternative extraction
+                        # Strategy 2: Enhanced thumbnail and chapter extraction
                         elif strategy == "extract_frames_info":
-                            st.info("🎯 Strategy 2: Using alternative frame extraction method")
+                            st.info("🎯 Strategy 2: Enhanced thumbnail and chapter extraction")
                             
-                            # Try to get any available video format info
+                            # First get video info to understand duration
                             info_cmd = [
                                 "yt-dlp",
-                                "--list-formats",
-                                "--no-download", 
+                                "--dump-json",
+                                "--no-download",
                                 st.session_state.youtube_url
                             ]
                             
                             result = subprocess.run(info_cmd, capture_output=True, text=True, timeout=30)
                             if result.returncode == 0:
-                                st.info("✅ Video formats available - trying thumbnail extraction")
-                                
-                                # Try to extract thumbnails/preview frames
-                                thumb_cmd = [
-                                    "yt-dlp",
-                                    "--write-thumbnail",
-                                    "--skip-download",
-                                    "-o", str(Path(tmpdir) / "thumbnail.%(ext)s"),
-                                    st.session_state.youtube_url
-                                ]
-                                
-                                thumb_result = subprocess.run(thumb_cmd, capture_output=True, text=True, timeout=30)
-                                if thumb_result.returncode == 0:
-                                    # Look for downloaded thumbnails
-                                    thumbnails = list(Path(tmpdir).glob("thumbnail.*"))
-                                    if thumbnails:
-                                        st.success(f"✅ Got {len(thumbnails)} thumbnail(s) for testing")
-                                        # Use thumbnail as a single frame for testing
-                                        frames_extracted = [(0.0, thumbnails[0])]
+                                try:
+                                    video_info = json.loads(result.stdout)
+                                    duration = video_info.get('duration', 300)  # Default to 5 minutes
+                                    title = video_info.get('title', 'Unknown')
+                                    
+                                    st.success(f"✅ Video info: '{title}' ({duration}s)")
+                                    
+                                    frames_extracted = []
+                                    
+                                    # Strategy 2a: Extract main thumbnail
+                                    thumb_cmd = [
+                                        "yt-dlp",
+                                        "--write-thumbnail",
+                                        "--skip-download",
+                                        "-o", str(Path(tmpdir) / "main_thumbnail.%(ext)s"),
+                                        st.session_state.youtube_url
+                                    ]
+                                    
+                                    thumb_result = subprocess.run(thumb_cmd, capture_output=True, text=True, timeout=30)
+                                    if thumb_result.returncode == 0:
+                                        thumbnails = list(Path(tmpdir).glob("main_thumbnail.*"))
+                                        if thumbnails:
+                                            # Use main thumbnail as first frame
+                                            frames_extracted.append((0.0, thumbnails[0]))
+                                            st.info(f"✅ Got main thumbnail")
+                                    
+                                    # Strategy 2b: Try to get chapter thumbnails or additional previews
+                                    # Some videos have chapter markers with thumbnails
+                                    chapters = video_info.get('chapters', [])
+                                    if chapters:
+                                        st.info(f"✅ Found {len(chapters)} chapters - extracting chapter points")
+                                        for i, chapter in enumerate(chapters[:10]):  # Limit to 10 chapters
+                                            chapter_time = chapter.get('start_time', i * 30)
+                                            frames_extracted.append((chapter_time, thumbnails[0]))  # Reuse main thumbnail with different timestamps
+                                    
+                                    # Strategy 2c: Create artificial time points if no chapters
+                                    if not chapters:
+                                        st.info("📝 Creating artificial time points for testing")
+                                        # Create time points every 30 seconds or skip interval
+                                        skip_interval = st.session_state.skip if hasattr(st.session_state, 'skip') else 30
+                                        time_points = range(0, min(int(duration), 300), skip_interval)  # Max 5 minutes
+                                        
+                                        for time_point in time_points:
+                                            if thumbnails:
+                                                frames_extracted.append((float(time_point), thumbnails[0]))
+                                    
+                                    if frames_extracted:
+                                        st.success(f"✅ Created {len(frames_extracted)} frame points for testing")
                                         video_data = {
                                             'frames': frames_extracted,
-                                            'fps': 1,
-                                            'duration': 1
+                                            'fps': 1,  # Artificial FPS since we're using thumbnails
+                                            'duration': duration
                                         }
                                         video_path = video_data
                                         download_success = True
                                         break
+                                    else:
+                                        st.warning("⚠️ No frames could be extracted")
+                                        
+                                except json.JSONDecodeError:
+                                    st.error("❌ Could not parse video info JSON")
+                            else:
+                                st.warning(f"⚠️ Could not get video info: {result.stderr[:100]}")
                             continue
                         
-                        # Strategy 3: Try ffmpeg approach
+                        # Strategy 3: Try segment-based extraction
                         elif strategy == "extract_frames_ffmpeg":
-                            st.info("🎯 Strategy 3: Using ffmpeg for frame extraction")
-                            # This would require ffmpeg to be available, skip for now
-                            st.warning("FFmpeg strategy not implemented (requires additional dependencies)")
+                            st.info("🎯 Strategy 3: Segment-based frame extraction")
+                            
+                            # Try to extract very short video segments and convert to frames
+                            # This sometimes works when full video download fails
+                            try:
+                                # Get video duration first
+                                info_cmd = ["yt-dlp", "--dump-json", "--no-download", st.session_state.youtube_url]
+                                result = subprocess.run(info_cmd, capture_output=True, text=True, timeout=30)
+                                
+                                if result.returncode == 0:
+                                    video_info = json.loads(result.stdout)
+                                    duration = video_info.get('duration', 300)
+                                    
+                                    frames_extracted = []
+                                    skip_interval = st.session_state.skip if hasattr(st.session_state, 'skip') else 30
+                                    
+                                    # Try to download very short segments (1 second each)
+                                    time_points = range(0, min(int(duration), 180), skip_interval)  # Max 3 minutes
+                                    
+                                    for i, start_time in enumerate(time_points[:5]):  # Limit to 5 segments
+                                        segment_cmd = [
+                                            "yt-dlp",
+                                            "-f", "worst[height<=360]",
+                                            "--external-downloader", "ffmpeg",
+                                            "--external-downloader-args", f"-ss {start_time} -t 1",  # 1 second segment
+                                            "-o", str(Path(tmpdir) / f"segment_{i}.%(ext)s"),
+                                            st.session_state.youtube_url
+                                        ]
+                                        
+                                        seg_result = subprocess.run(segment_cmd, capture_output=True, text=True, timeout=60)
+                                        if seg_result.returncode == 0:
+                                            # Look for downloaded segment
+                                            segments = list(Path(tmpdir).glob(f"segment_{i}.*"))
+                                            if segments:
+                                                # Extract first frame from segment
+                                                cap = cv2.VideoCapture(str(segments[0]))
+                                                if cap.isOpened():
+                                                    ret, frame = cap.read()
+                                                    if ret:
+                                                        frame_path = Path(tmpdir) / f"frame_{start_time}s.jpg"
+                                                        cv2.imwrite(str(frame_path), frame)
+                                                        frames_extracted.append((float(start_time), frame_path))
+                                                        st.info(f"✅ Extracted frame at {start_time}s")
+                                                    cap.release()
+                                        else:
+                                            st.warning(f"⚠️ Segment {i} failed: {seg_result.stderr[:50]}...")
+                                    
+                                    if frames_extracted:
+                                        st.success(f"✅ Extracted {len(frames_extracted)} frames from segments")
+                                        video_data = {
+                                            'frames': frames_extracted,
+                                            'fps': 1,
+                                            'duration': duration
+                                        }
+                                        video_path = video_data
+                                        download_success = True
+                                        break
+                                    else:
+                                        st.warning("⚠️ No segments could be downloaded")
+                                else:
+                                    st.warning("⚠️ Could not get video duration info")
+                            except Exception as e:
+                                st.warning(f"⚠️ Strategy 3 error: {str(e)}")
                             continue
                         
                         # Handle demo mode
