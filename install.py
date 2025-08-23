@@ -56,7 +56,7 @@ def main():
     
     # Install VEENDER
     print("⬇️ Installing VEENDER...")
-    run_command([str(pip_path), "install", "veender"])  # Once published to PyPI
+    run_command([str(pip_path), "install", "veender-face-finder"])  # or whatever name you choose
     
     # Create directory structure
     print("📁 Creating directory structure...")

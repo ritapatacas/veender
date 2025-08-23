@@ -49,3 +49,15 @@ data/output/frames/
 
 .idea/
 \*.iml
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+.eggs/
+wheels/
+*.whl
+
+# PyInstaller
+*.manifest
+*.spec
