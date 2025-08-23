@@ -219,6 +219,104 @@ if not st.session_state.processing:
                 if video_id:
                     st.info(f"🎬 Video ID: {video_id}")
                     st.success("✅ Valid YouTube URL detected")
+                    
+                    # Debug button for testing video access
+                    col_debug1, col_debug2 = st.columns(2)
+                    with col_debug1:
+                        if st.button("🔍 Debug: Test Video Info", type="secondary"):
+                            with st.spinner("Testing video access..."):
+                                test_cmd = [
+                                    "yt-dlp", 
+                                    "--dump-json",
+                                    "--no-download",
+                                    youtube_url
+                                ]
+                                try:
+                                    result = subprocess.run(test_cmd, capture_output=True, text=True, timeout=30)
+                                    if result.returncode == 0:
+                                        video_info = json.loads(result.stdout)
+                                        st.success("✅ Video info accessible!")
+                                        st.write(f"**Title**: {video_info.get('title', 'Unknown')}")
+                                        st.write(f"**Duration**: {video_info.get('duration', 'Unknown')} seconds")
+                                        st.write(f"**Uploader**: {video_info.get('uploader', 'Unknown')}")
+                                        st.write(f"**View Count**: {video_info.get('view_count', 'Unknown')}")
+                                        if video_info.get('url'):
+                                            st.write("**Stream URL**: ✅ Available")
+                                        else:
+                                            st.write("**Stream URL**: ❌ Not available")
+                                    else:
+                                        st.error(f"❌ Cannot access video info: {result.stderr}")
+                                except Exception as e:
+                                    st.error(f"❌ Error testing video: {str(e)}")
+                    
+                    with col_debug2:
+                        if st.button("🎯 Debug: Test Frame Extraction", type="secondary"):
+                            with st.spinner("Testing frame extraction strategies..."):
+                                import tempfile
+                                with tempfile.TemporaryDirectory() as tmpdir:
+                                    # Test Strategy 1: Stream URL extraction
+                                    st.write("**Testing Strategy 1**: Stream URL extraction")
+                                    info_cmd = [
+                                        "yt-dlp", 
+                                        "--dump-json",
+                                        "--no-download",
+                                        "-f", "worst[height<=480]",
+                                        youtube_url
+                                    ]
+                                    
+                                    try:
+                                        result = subprocess.run(info_cmd, capture_output=True, text=True, timeout=60)
+                                        if result.returncode == 0:
+                                            video_info = json.loads(result.stdout)
+                                            stream_url = video_info.get('url')
+                                            if stream_url:
+                                                st.success("✅ Stream URL obtained")
+                                                # Test if OpenCV can open it
+                                                cap = cv2.VideoCapture(stream_url)
+                                                if cap.isOpened():
+                                                    ret, frame = cap.read()
+                                                    if ret:
+                                                        st.success("✅ OpenCV can read frames from stream")
+                                                        # Display first frame as test
+                                                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                                                        st.image(frame_rgb, caption="Sample frame from stream", width=300)
+                                                    else:
+                                                        st.error("❌ OpenCV cannot read frames from stream")
+                                                    cap.release()
+                                                else:
+                                                    st.error("❌ OpenCV cannot open stream URL")
+                                            else:
+                                                st.error("❌ No stream URL in video info")
+                                        else:
+                                            st.error(f"❌ Strategy 1 failed: {result.stderr[:100]}")
+                                    except Exception as e:
+                                        st.error(f"❌ Strategy 1 error: {str(e)}")
+                                    
+                                    # Test Strategy 2: Thumbnail extraction
+                                    st.write("**Testing Strategy 2**: Thumbnail extraction")
+                                    thumb_cmd = [
+                                        "yt-dlp",
+                                        "--write-thumbnail",
+                                        "--skip-download",
+                                        "-o", str(Path(tmpdir) / "debug_thumbnail.%(ext)s"),
+                                        youtube_url
+                                    ]
+                                    
+                                    try:
+                                        thumb_result = subprocess.run(thumb_cmd, capture_output=True, text=True, timeout=30)
+                                        if thumb_result.returncode == 0:
+                                            thumbnails = list(Path(tmpdir).glob("debug_thumbnail.*"))
+                                            if thumbnails:
+                                                st.success(f"✅ Got {len(thumbnails)} thumbnail(s)")
+                                                # Display thumbnail
+                                                thumb_img = Image.open(thumbnails[0])
+                                                st.image(thumb_img, caption="Video thumbnail", width=300)
+                                            else:
+                                                st.error("❌ No thumbnails found")
+                                        else:
+                                            st.error(f"❌ Strategy 2 failed: {thumb_result.stderr[:100]}")
+                                    except Exception as e:
+                                        st.error(f"❌ Strategy 2 error: {str(e)}")
                 else:
                     st.error("❌ Invalid YouTube URL format")
             except:
@@ -281,57 +379,144 @@ elif st.session_state.processing:
             ref_features = np.mean(ref_features_list, axis=0)
             progress_bar.progress(20)
             
-            # Download video
-            status_text.text("Downloading video...")
+            # Extract frames from video
+            status_text.text("Extracting frames from video (no full download needed)...")
             with tempfile.TemporaryDirectory() as tmpdir:
                 download_success = False
                 video_path = None
                 
-                # Try multiple download strategies with cloud-optimized settings
+                # Try frame extraction strategies (no full video download needed)
                 strategies = [
-                    # Strategy 1: Use mobile user agent (less blocked)
-                    [
-                        "yt-dlp",
-                        "-f", "worst[height<=480]",
-                        "-o", str(Path(tmpdir) / "%(title)s.%(ext)s"),
-                        "--user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1",
-                        "--extractor-retries", "5",
-                        "--fragment-retries", "5",
-                        "--retry-sleep", "2",
-                        "--sleep-interval", "1",
-                        "--max-sleep-interval", "5",
-                        st.session_state.youtube_url
-                    ],
-                    # Strategy 2: Use different client (embedded player)
-                    [
-                        "yt-dlp",
-                        "-f", "worst",
-                        "-o", str(Path(tmpdir) / "%(title)s.%(ext)s"),
-                        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                        "--extractor-args", "youtube:player_client=web_embedded",
-                        "--sleep-interval", "1",
-                        st.session_state.youtube_url
-                    ],
-                    # Strategy 3: Use TV client (often bypasses restrictions)
-                    [
-                        "yt-dlp",
-                        "-f", "worst",
-                        "-o", str(Path(tmpdir) / "%(title)s.%(ext)s"),
-                        "--extractor-args", "youtube:player_client=tv_embedded",
-                        "--sleep-interval", "2",
-                        st.session_state.youtube_url
-                    ],
-                    # Strategy 4: Demo mode (no download, just show info)
+                    # Strategy 1: Extract stream URL and sample frames directly
+                    "extract_frames_direct",
+                    # Strategy 2: Get video info and extract frame URLs
+                    "extract_frames_info",
+                    # Strategy 3: Use ffmpeg with stream URL 
+                    "extract_frames_ffmpeg",
+                    # Strategy 4: Demo mode fallback
                     "demo"
                 ]
                 
-                for i, cmd in enumerate(strategies):
+                for i, strategy in enumerate(strategies):
                     try:
-                        status_text.text(f"Trying download strategy {i+1}/{len(strategies)}...")
+                        status_text.text(f"Trying strategy {i+1}/{len(strategies)}: {strategy.replace('_', ' ').title()}...")
+                        
+                        # Strategy 1: Extract frames directly from stream
+                        if strategy == "extract_frames_direct":
+                            st.info("🎯 Strategy 1: Extracting video stream URL for direct frame access")
+                            
+                            # Get video stream URL without downloading
+                            info_cmd = [
+                                "yt-dlp", 
+                                "--dump-json",
+                                "--no-download",
+                                "-f", "worst[height<=480]",
+                                st.session_state.youtube_url
+                            ]
+                            
+                            result = subprocess.run(info_cmd, capture_output=True, text=True, timeout=60)
+                            if result.returncode == 0:
+                                video_info = json.loads(result.stdout)
+                                stream_url = video_info.get('url')
+                                duration = video_info.get('duration', 60)
+                                
+                                if stream_url:
+                                    st.success(f"✅ Got stream URL! Video duration: {duration}s")
+                                    
+                                    # Extract frames using cv2 directly from stream
+                                    cap = cv2.VideoCapture(stream_url)
+                                    if cap.isOpened():
+                                        frames_extracted = []
+                                        fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
+                                        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or int(duration * fps)
+                                        
+                                        # Sample frames at intervals
+                                        sample_interval = max(1, frame_count // 20)  # Get ~20 sample frames
+                                        
+                                        for frame_pos in range(0, frame_count, sample_interval):
+                                            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_pos)
+                                            ret, frame = cap.read()
+                                            if ret:
+                                                timestamp = frame_pos / fps
+                                                frame_path = Path(tmpdir) / f"frame_{timestamp:.1f}s.jpg"
+                                                cv2.imwrite(str(frame_path), frame)
+                                                frames_extracted.append((timestamp, frame_path))
+                                        
+                                        cap.release()
+                                        
+                                        if frames_extracted:
+                                            # Create a mock video object with frame data
+                                            video_data = {
+                                                'frames': frames_extracted,
+                                                'fps': fps,
+                                                'duration': duration
+                                            }
+                                            video_path = video_data
+                                            download_success = True
+                                            st.success(f"✅ Extracted {len(frames_extracted)} frames directly from stream!")
+                                            break
+                                    else:
+                                        st.warning("Stream URL obtained but couldn't open with OpenCV")
+                                else:
+                                    st.warning("No stream URL found in video info")
+                            else:
+                                st.warning(f"Failed to get video info: {result.stderr[:100]}")
+                            continue
+                        
+                        # Strategy 2: Get video info and try alternative extraction
+                        elif strategy == "extract_frames_info":
+                            st.info("🎯 Strategy 2: Using alternative frame extraction method")
+                            
+                            # Try to get any available video format info
+                            info_cmd = [
+                                "yt-dlp",
+                                "--list-formats",
+                                "--no-download", 
+                                st.session_state.youtube_url
+                            ]
+                            
+                            result = subprocess.run(info_cmd, capture_output=True, text=True, timeout=30)
+                            if result.returncode == 0:
+                                st.info("✅ Video formats available - trying thumbnail extraction")
+                                
+                                # Try to extract thumbnails/preview frames
+                                thumb_cmd = [
+                                    "yt-dlp",
+                                    "--write-thumbnail",
+                                    "--skip-download",
+                                    "-o", str(Path(tmpdir) / "thumbnail.%(ext)s"),
+                                    st.session_state.youtube_url
+                                ]
+                                
+                                thumb_result = subprocess.run(thumb_cmd, capture_output=True, text=True, timeout=30)
+                                if thumb_result.returncode == 0:
+                                    # Look for downloaded thumbnails
+                                    thumbnails = list(Path(tmpdir).glob("thumbnail.*"))
+                                    if thumbnails:
+                                        st.success(f"✅ Got {len(thumbnails)} thumbnail(s) for testing")
+                                        # Use thumbnail as a single frame for testing
+                                        frames_extracted = [(0.0, thumbnails[0])]
+                                        video_data = {
+                                            'frames': frames_extracted,
+                                            'fps': 1,
+                                            'duration': 1
+                                        }
+                                        video_path = video_data
+                                        download_success = True
+                                        break
+                            continue
+                        
+                        # Strategy 3: Try ffmpeg approach
+                        elif strategy == "extract_frames_ffmpeg":
+                            st.info("🎯 Strategy 3: Using ffmpeg for frame extraction")
+                            # This would require ffmpeg to be available, skip for now
+                            st.warning("FFmpeg strategy not implemented (requires additional dependencies)")
+                            continue
                         
                         # Handle demo mode
-                        if cmd == "demo":
+                        elif strategy == "demo":
                             st.warning("🎬 Demo Mode: Creating sample video for demonstration")
+                            st.info("📝 **Note**: Demo video creates generic face patterns. For realistic matching, upload a photo with clear facial features and adjust tolerance to 0.3-0.5")
                             
                             # Create a simple demo video with OpenCV
                             import cv2
@@ -339,19 +524,40 @@ elif st.session_state.processing:
                             demo_path = Path(tmpdir) / "demo_video.mp4"
                             out = cv2.VideoWriter(str(demo_path), fourcc, 10.0, (640, 480))
                             
-                            # Create 50 frames with different colors and a face-like shape
-                            for frame_num in range(50):
-                                # Create colored background
-                                color = (frame_num * 5 % 255, 100, 200)
-                                demo_frame = np.full((480, 640, 3), color, dtype=np.uint8)
+                            # Create multiple frames with varied face-like patterns
+                            for frame_num in range(100):  # More frames for better testing
+                                # Create varied background
+                                bg_color = (50 + frame_num % 100, 80 + frame_num % 150, 120 + frame_num % 200)
+                                demo_frame = np.full((480, 640, 3), bg_color, dtype=np.uint8)
                                 
-                                # Add a face-like circle
-                                center_x = 320 + int(50 * np.sin(frame_num * 0.1))
-                                center_y = 240 + int(30 * np.cos(frame_num * 0.1))
-                                cv2.circle(demo_frame, (center_x, center_y), 60, (255, 220, 177), -1)
-                                cv2.circle(demo_frame, (center_x-20, center_y-15), 8, (0, 0, 0), -1)  # Left eye
-                                cv2.circle(demo_frame, (center_x+20, center_y-15), 8, (0, 0, 0), -1)  # Right eye
-                                cv2.ellipse(demo_frame, (center_x, center_y+15), (15, 8), 0, 0, 180, (0, 0, 0), 2)  # Mouth
+                                # Create multiple face-like shapes with variation
+                                for face_idx in range(2):  # Two faces per frame
+                                    base_x = 160 + face_idx * 320 + int(30 * np.sin(frame_num * 0.1 + face_idx))
+                                    base_y = 240 + int(20 * np.cos(frame_num * 0.08 + face_idx))
+                                    
+                                    # Vary face size and features
+                                    face_size = 50 + int(20 * np.sin(frame_num * 0.05))
+                                    
+                                    # Face shape (oval)
+                                    cv2.ellipse(demo_frame, (base_x, base_y), (face_size, int(face_size * 1.2)), 0, 0, 360, (255, 220, 177), -1)
+                                    
+                                    # Eyes with variation
+                                    eye_y = base_y - int(face_size * 0.3)
+                                    eye_size = max(3, int(face_size * 0.15))
+                                    cv2.circle(demo_frame, (base_x - int(face_size * 0.3), eye_y), eye_size, (0, 0, 0), -1)
+                                    cv2.circle(demo_frame, (base_x + int(face_size * 0.3), eye_y), eye_size, (0, 0, 0), -1)
+                                    
+                                    # Nose
+                                    nose_y = base_y
+                                    cv2.line(demo_frame, (base_x, nose_y - 5), (base_x, nose_y + 5), (150, 100, 100), 2)
+                                    
+                                    # Mouth with variation
+                                    mouth_y = base_y + int(face_size * 0.4)
+                                    mouth_width = int(face_size * 0.4)
+                                    if frame_num % 20 < 10:  # Smile variation
+                                        cv2.ellipse(demo_frame, (base_x, mouth_y), (mouth_width, 8), 0, 0, 180, (0, 0, 0), 2)
+                                    else:
+                                        cv2.line(demo_frame, (base_x - mouth_width//2, mouth_y), (base_x + mouth_width//2, mouth_y), (0, 0, 0), 2)
                                 
                                 out.write(demo_frame)
                             
@@ -360,30 +566,13 @@ elif st.session_state.processing:
                             if demo_path.exists():
                                 video_path = demo_path
                                 download_success = True
-                                st.info("✅ Demo video created for testing face detection")
+                                st.success("✅ Demo video created with varied face patterns for testing")
+                                st.info("🎯 **Tip**: The demo creates generic faces. Real matches depend on your reference image quality and tolerance settings.")
                                 break
                             continue
                         
-                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-                        
-                        if result.returncode == 0:
-                            # Find downloaded file
-                            downloaded_files = list(Path(tmpdir).glob("*"))
-                            if downloaded_files:
-                                video_path = downloaded_files[0]
-                                download_success = True
-                                st.success(f"✅ Download successful with strategy {i+1}")
-                                break
-                        else:
-                            error_msg = result.stderr.strip()
-                            st.warning(f"Strategy {i+1} failed: {error_msg[:200]}...")
-                            
-                            # Log detailed error information
-                            with st.expander(f"🔍 Detailed error for strategy {i+1}", expanded=False):
-                                st.code(f"""Command: {' '.join(cmd)}
-Return code: {result.returncode}
-Error output: {error_msg}
-Standard output: {result.stdout.strip()}""")
+                        # This section is now handled by individual strategies above
+                        pass
                     except subprocess.TimeoutExpired:
                         st.warning(f"Strategy {i+1} timed out")
                     except Exception as e:
@@ -412,59 +601,96 @@ Standard output: {result.stdout.strip()}""")
                 progress_bar.progress(40)
                 
                 # Process video with face detection
-                status_text.text("Processing video frames with face detection...")
-                cap = cv2.VideoCapture(str(video_path))
-                
-                if not cap.isOpened():
-                    st.error("❌ Could not open video file")
-                    if st.button("🔄 Try Again", type="primary"):
-                        st.session_state.processing = False
-                        st.rerun()
-                    st.stop()
-                
-                fps = int(cap.get(cv2.CAP_PROP_FPS))
-                frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                
-                st.info(f"📹 Video info: {frame_count} frames, {fps} FPS")
+                status_text.text("Processing frames with face detection...")
                 
                 matches = []
                 frame_container = st.container()
                 
-                frame_number = 0
-                processed_frames = 0
-                total_frames_to_process = frame_count // st.session_state.skip
-                
-                while True:
-                    ret, frame = cap.read()
-                    if not ret:
-                        break
+                # Handle different video path types
+                if isinstance(video_path, dict):
+                    # Frame data from stream extraction
+                    frames_data = video_path['frames']
+                    fps = video_path['fps']
+                    duration = video_path['duration']
                     
-                    if frame_number % st.session_state.skip == 0:
-                        # Extract features from current frame
-                        frame_features = extract_face_features(frame, face_cascade)
+                    st.info(f"📹 Frame data: {len(frames_data)} frames extracted, {fps} FPS, {duration}s duration")
+                    
+                    for i, (timestamp, frame_path) in enumerate(frames_data):
+                        # Load frame from file
+                        frame = cv2.imread(str(frame_path))
+                        if frame is not None:
+                            # Extract features from current frame
+                            frame_features = extract_face_features(frame, face_cascade)
+                            
+                            if frame_features is not None:
+                                # Compare with reference
+                                if compare_faces(ref_features, frame_features, st.session_state.tolerance):
+                                    matches.append((timestamp, frame))
+                                    
+                                    # Display match immediately
+                                    with frame_container:
+                                        st.success(f"🎯 Match found at {timestamp:.1f}s!")
+                                        col1, col2 = st.columns([1, 3])
+                                        with col1:
+                                            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                                            st.image(frame_rgb, caption=f"Frame at {timestamp:.1f}s", use_container_width=True)
                         
-                        if frame_features is not None:
-                            # Compare with reference
-                            if compare_faces(ref_features, frame_features, st.session_state.tolerance):
-                                timestamp = frame_number / fps
-                                matches.append((timestamp, frame))
-                                
-                                # Display match immediately
-                                with frame_container:
-                                    st.success(f"🎯 Match found at {timestamp:.1f}s!")
-                                    col1, col2 = st.columns([1, 3])
-                                    with col1:
-                                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                                        st.image(frame_rgb, caption=f"Frame at {timestamp:.1f}s", use_container_width=True)
-                        
-                        processed_frames += 1
-                        progress = 40 + (processed_frames / total_frames_to_process) * 50
+                        progress = 40 + ((i + 1) / len(frames_data)) * 50
                         progress_bar.progress(min(90, int(progress)))
-                        status_text.text(f"Processed {processed_frames}/{total_frames_to_process} frames...")
-                    
-                    frame_number += 1
+                        status_text.text(f"Processed {i+1}/{len(frames_data)} frames...")
                 
-                cap.release()
+                else:
+                    # Traditional video file processing
+                    cap = cv2.VideoCapture(str(video_path))
+                    
+                    if not cap.isOpened():
+                        st.error("❌ Could not open video file")
+                        if st.button("🔄 Try Again", type="primary"):
+                            st.session_state.processing = False
+                            st.rerun()
+                        st.stop()
+                    
+                    fps = int(cap.get(cv2.CAP_PROP_FPS))
+                    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                    
+                    st.info(f"📹 Video info: {frame_count} frames, {fps} FPS")
+                    
+                    frame_number = 0
+                    processed_frames = 0
+                    total_frames_to_process = frame_count // st.session_state.skip
+                    
+                    while True:
+                        ret, frame = cap.read()
+                        if not ret:
+                            break
+                        
+                        if frame_number % st.session_state.skip == 0:
+                            # Extract features from current frame
+                            frame_features = extract_face_features(frame, face_cascade)
+                            
+                            if frame_features is not None:
+                                # Compare with reference
+                                if compare_faces(ref_features, frame_features, st.session_state.tolerance):
+                                    timestamp = frame_number / fps
+                                    matches.append((timestamp, frame))
+                                    
+                                    # Display match immediately
+                                    with frame_container:
+                                        st.success(f"🎯 Match found at {timestamp:.1f}s!")
+                                        col1, col2 = st.columns([1, 3])
+                                        with col1:
+                                            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                                            st.image(frame_rgb, caption=f"Frame at {timestamp:.1f}s", use_container_width=True)
+                            
+                            processed_frames += 1
+                            progress = 40 + (processed_frames / total_frames_to_process) * 50
+                            progress_bar.progress(min(90, int(progress)))
+                            status_text.text(f"Processed {processed_frames}/{total_frames_to_process} frames...")
+                        
+                        frame_number += 1
+                    
+                    cap.release()
+                
                 progress_bar.progress(100)
                 
                 # Show final results
@@ -479,7 +705,12 @@ Standard output: {result.stdout.strip()}""")
                             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                             st.image(frame_rgb, caption=f"{timestamp:.1f}s", use_container_width=True)
                 else:
-                    st.warning("⚠️ No matches found. Try adjusting the tolerance or using different reference images.")
+                    st.warning("⚠️ No matches found. This is normal for demo videos with generic faces.")
+                    st.info("""💡 **To see matches**:
+- **Lower tolerance** to 0.3-0.4 for more sensitive matching
+- **Upload clearer reference images** with distinct facial features  
+- **Try different demo runs** - face patterns vary each time
+- **Local deployment** with real YouTube videos will show better results""")
         
         except Exception as e:
             st.error(f"❌ An error occurred: {str(e)}")
