@@ -281,39 +281,83 @@ elif st.session_state.processing:
                 download_success = False
                 video_path = None
                 
-                # Try multiple download strategies
+                # Try multiple download strategies with cloud-optimized settings
                 strategies = [
-                    # Strategy 1: Low quality with cookies
+                    # Strategy 1: Use mobile user agent (less blocked)
                     [
                         "yt-dlp",
                         "-f", "worst[height<=480]",
                         "-o", str(Path(tmpdir) / "%(title)s.%(ext)s"),
-                        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                        "--extractor-retries", "3",
-                        "--no-check-certificate",
+                        "--user-agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 15_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Mobile/15E148 Safari/604.1",
+                        "--extractor-retries", "5",
+                        "--fragment-retries", "5",
+                        "--retry-sleep", "2",
+                        "--sleep-interval", "1",
+                        "--max-sleep-interval", "5",
                         st.session_state.youtube_url
                     ],
-                    # Strategy 2: Audio only (if video fails)
+                    # Strategy 2: Use different client (embedded player)
                     [
                         "yt-dlp",
-                        "-f", "bestaudio[ext=m4a]",
+                        "-f", "worst",
                         "-o", str(Path(tmpdir) / "%(title)s.%(ext)s"),
                         "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        "--extractor-args", "youtube:player_client=web_embedded",
+                        "--sleep-interval", "1",
                         st.session_state.youtube_url
                     ],
-                    # Strategy 3: Any format
+                    # Strategy 3: Use TV client (often bypasses restrictions)
                     [
                         "yt-dlp",
-                        "-f", "best",
+                        "-f", "worst",
                         "-o", str(Path(tmpdir) / "%(title)s.%(ext)s"),
-                        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        "--extractor-args", "youtube:player_client=tv_embedded",
+                        "--sleep-interval", "2",
                         st.session_state.youtube_url
-                    ]
+                    ],
+                    # Strategy 4: Demo mode (no download, just show info)
+                    "demo"
                 ]
                 
                 for i, cmd in enumerate(strategies):
                     try:
-                        status_text.text(f"Trying download strategy {i+1}/3...")
+                        status_text.text(f"Trying download strategy {i+1}/{len(strategies)}...")
+                        
+                        # Handle demo mode
+                        if cmd == "demo":
+                            st.warning("🎬 Demo Mode: Creating sample video for demonstration")
+                            
+                            # Create a simple demo video with OpenCV
+                            import cv2
+                            fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+                            demo_path = Path(tmpdir) / "demo_video.mp4"
+                            out = cv2.VideoWriter(str(demo_path), fourcc, 10.0, (640, 480))
+                            
+                            # Create 50 frames with different colors and a face-like shape
+                            for frame_num in range(50):
+                                # Create colored background
+                                color = (frame_num * 5 % 255, 100, 200)
+                                demo_frame = np.full((480, 640, 3), color, dtype=np.uint8)
+                                
+                                # Add a face-like circle
+                                center_x = 320 + int(50 * np.sin(frame_num * 0.1))
+                                center_y = 240 + int(30 * np.cos(frame_num * 0.1))
+                                cv2.circle(demo_frame, (center_x, center_y), 60, (255, 220, 177), -1)
+                                cv2.circle(demo_frame, (center_x-20, center_y-15), 8, (0, 0, 0), -1)  # Left eye
+                                cv2.circle(demo_frame, (center_x+20, center_y-15), 8, (0, 0, 0), -1)  # Right eye
+                                cv2.ellipse(demo_frame, (center_x, center_y+15), (15, 8), 0, 0, 180, (0, 0, 0), 2)  # Mouth
+                                
+                                out.write(demo_frame)
+                            
+                            out.release()
+                            
+                            if demo_path.exists():
+                                video_path = demo_path
+                                download_success = True
+                                st.info("✅ Demo video created for testing face detection")
+                                break
+                            continue
+                        
                         result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
                         
                         if result.returncode == 0:
@@ -329,20 +373,20 @@ elif st.session_state.processing:
                             st.warning(f"Strategy {i+1} failed: {error_msg[:200]}...")
                             
                             # Log detailed error information
-                            st.expander(f"🔍 Detailed error for strategy {i+1}", expanded=False).code(f"""
-Command: {' '.join(cmd)}
+                            with st.expander(f"🔍 Detailed error for strategy {i+1}", expanded=False):
+                                st.code(f"""Command: {' '.join(cmd)}
 Return code: {result.returncode}
 Error output: {error_msg}
-Standard output: {result.stdout.strip()}
-""")
+Standard output: {result.stdout.strip()}""")
                     except subprocess.TimeoutExpired:
                         st.warning(f"Strategy {i+1} timed out")
                     except Exception as e:
                         st.warning(f"Strategy {i+1} error: {str(e)}")
                 
                 if not download_success:
-                    st.error("❌ All download strategies failed. YouTube may be blocking requests.")
-                    st.info("💡 **Alternative**: Try a different YouTube video or check if the URL is accessible in your browser")
+                    st.error("❌ All download strategies failed. YouTube is blocking cloud server requests.")
+                    st.warning("🔍 **Why this happens**: YouTube blocks datacenter IPs (like Streamlit Cloud) but allows residential IPs (like your home). This is why it works locally but not in the cloud.")
+                    st.info("💡 **Solutions**: Try different videos, use the demo mode above, or deploy on your own server with residential IP")
                     if st.button("🔄 Try Again", type="primary"):
                         st.session_state.processing = False
                         st.rerun()
