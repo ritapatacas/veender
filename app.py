@@ -387,12 +387,12 @@ elif st.session_state.processing:
                 
                 # Try frame extraction strategies (no full video download needed)
                 strategies = [
-                    # Strategy 1: Extract stream URL and sample frames directly
-                    "extract_frames_direct",
-                    # Strategy 2: Get video info and extract frame URLs
-                    "extract_frames_info",
-                    # Strategy 3: Use ffmpeg with stream URL 
+                    # Strategy 1: Segment-based frame extraction (try first - more frames)
                     "extract_frames_ffmpeg",
+                    # Strategy 2: Enhanced thumbnail and chapter extraction (reliable fallback)
+                    "extract_frames_info",
+                    # Strategy 3: Extract stream URL and sample frames directly
+                    "extract_frames_direct",
                     # Strategy 4: Demo mode fallback
                     "demo"
                 ]
@@ -401,66 +401,71 @@ elif st.session_state.processing:
                     try:
                         status_text.text(f"Trying strategy {i+1}/{len(strategies)}: {strategy.replace('_', ' ').title()}...")
                         
-                        # Strategy 1: Extract frames directly from stream
-                        if strategy == "extract_frames_direct":
-                            st.info("🎯 Strategy 1: Extracting video stream URL for direct frame access")
+                        # Strategy 1: Segment-based frame extraction (moved from Strategy 3)
+                        if strategy == "extract_frames_ffmpeg":
+                            st.info("🎯 Strategy 1: Segment-based frame extraction")
                             
-                            # Get video stream URL without downloading
-                            info_cmd = [
-                                "yt-dlp", 
-                                "--dump-json",
-                                "--no-download",
-                                "-f", "worst[height<=480]",
-                                st.session_state.youtube_url
-                            ]
-                            
-                            result = subprocess.run(info_cmd, capture_output=True, text=True, timeout=60)
-                            if result.returncode == 0:
-                                video_info = json.loads(result.stdout)
-                                stream_url = video_info.get('url')
-                                duration = video_info.get('duration', 60)
+                            # Try to extract very short video segments and convert to frames
+                            # This sometimes works when full video download fails
+                            try:
+                                # Get video duration first
+                                info_cmd = ["yt-dlp", "--dump-json", "--no-download", st.session_state.youtube_url]
+                                result = subprocess.run(info_cmd, capture_output=True, text=True, timeout=30)
                                 
-                                if stream_url:
-                                    st.success(f"✅ Got stream URL! Video duration: {duration}s")
+                                if result.returncode == 0:
+                                    video_info = json.loads(result.stdout)
+                                    duration = video_info.get('duration', 300)
                                     
-                                    # Extract frames using cv2 directly from stream
-                                    cap = cv2.VideoCapture(stream_url)
-                                    if cap.isOpened():
-                                        frames_extracted = []
-                                        fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
-                                        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or int(duration * fps)
+                                    frames_extracted = []
+                                    skip_interval = st.session_state.skip if hasattr(st.session_state, 'skip') else 30
+                                    
+                                    # Try to download very short segments (1 second each)
+                                    time_points = range(0, min(int(duration), 180), skip_interval)  # Max 3 minutes
+                                    
+                                    for i, start_time in enumerate(time_points[:5]):  # Limit to 5 segments
+                                        segment_cmd = [
+                                            "yt-dlp",
+                                            "-f", "worst[height<=360]",
+                                            "--external-downloader", "ffmpeg",
+                                            "--external-downloader-args", f"-ss {start_time} -t 1",  # 1 second segment
+                                            "-o", str(Path(tmpdir) / f"segment_{i}.%(ext)s"),
+                                            st.session_state.youtube_url
+                                        ]
                                         
-                                        # Sample frames at intervals
-                                        sample_interval = max(1, frame_count // 20)  # Get ~20 sample frames
-                                        
-                                        for frame_pos in range(0, frame_count, sample_interval):
-                                            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_pos)
-                                            ret, frame = cap.read()
-                                            if ret:
-                                                timestamp = frame_pos / fps
-                                                frame_path = Path(tmpdir) / f"frame_{timestamp:.1f}s.jpg"
-                                                cv2.imwrite(str(frame_path), frame)
-                                                frames_extracted.append((timestamp, frame_path))
-                                        
-                                        cap.release()
-                                        
-                                        if frames_extracted:
-                                            # Create a mock video object with frame data
-                                            video_data = {
-                                                'frames': frames_extracted,
-                                                'fps': fps,
-                                                'duration': duration
-                                            }
-                                            video_path = video_data
-                                            download_success = True
-                                            st.success(f"✅ Extracted {len(frames_extracted)} frames directly from stream!")
-                                            break
+                                        seg_result = subprocess.run(segment_cmd, capture_output=True, text=True, timeout=60)
+                                        if seg_result.returncode == 0:
+                                            # Look for downloaded segment
+                                            segments = list(Path(tmpdir).glob(f"segment_{i}.*"))
+                                            if segments:
+                                                # Extract first frame from segment
+                                                cap = cv2.VideoCapture(str(segments[0]))
+                                                if cap.isOpened():
+                                                    ret, frame = cap.read()
+                                                    if ret:
+                                                        frame_path = Path(tmpdir) / f"frame_{start_time}s.jpg"
+                                                        cv2.imwrite(str(frame_path), frame)
+                                                        frames_extracted.append((float(start_time), frame_path))
+                                                        st.info(f"✅ Extracted frame at {start_time}s")
+                                                    cap.release()
+                                        else:
+                                            st.warning(f"⚠️ Segment {i} failed: {seg_result.stderr[:50]}...")
+                                    
+                                    if frames_extracted:
+                                        st.success(f"✅ Extracted {len(frames_extracted)} frames from segments")
+                                        video_data = {
+                                            'frames': frames_extracted,
+                                            'fps': 1,
+                                            'duration': duration
+                                        }
+                                        video_path = video_data
+                                        download_success = True
+                                        break
                                     else:
-                                        st.warning("Stream URL obtained but couldn't open with OpenCV")
+                                        st.warning("⚠️ No segments could be downloaded")
                                 else:
-                                    st.warning("No stream URL found in video info")
-                            else:
-                                st.warning(f"Failed to get video info: {result.stderr[:100]}")
+                                    st.warning("⚠️ Could not get video duration info")
+                            except Exception as e:
+                                st.warning(f"⚠️ Strategy 1 error: {str(e)}")
                             continue
                         
                         # Strategy 2: Enhanced thumbnail and chapter extraction
@@ -542,71 +547,66 @@ elif st.session_state.processing:
                                 st.warning(f"⚠️ Could not get video info: {result.stderr[:100]}")
                             continue
                         
-                        # Strategy 3: Try segment-based extraction
-                        elif strategy == "extract_frames_ffmpeg":
-                            st.info("🎯 Strategy 3: Segment-based frame extraction")
+                        # Strategy 3: Extract frames directly from stream (moved from Strategy 1)
+                        elif strategy == "extract_frames_direct":
+                            st.info("🎯 Strategy 3: Extracting video stream URL for direct frame access")
                             
-                            # Try to extract very short video segments and convert to frames
-                            # This sometimes works when full video download fails
-                            try:
-                                # Get video duration first
-                                info_cmd = ["yt-dlp", "--dump-json", "--no-download", st.session_state.youtube_url]
-                                result = subprocess.run(info_cmd, capture_output=True, text=True, timeout=30)
+                            # Get video stream URL without downloading
+                            info_cmd = [
+                                "yt-dlp", 
+                                "--dump-json",
+                                "--no-download",
+                                "-f", "worst[height<=480]",
+                                st.session_state.youtube_url
+                            ]
+                            
+                            result = subprocess.run(info_cmd, capture_output=True, text=True, timeout=60)
+                            if result.returncode == 0:
+                                video_info = json.loads(result.stdout)
+                                stream_url = video_info.get('url')
+                                duration = video_info.get('duration', 60)
                                 
-                                if result.returncode == 0:
-                                    video_info = json.loads(result.stdout)
-                                    duration = video_info.get('duration', 300)
+                                if stream_url:
+                                    st.success(f"✅ Got stream URL! Video duration: {duration}s")
                                     
-                                    frames_extracted = []
-                                    skip_interval = st.session_state.skip if hasattr(st.session_state, 'skip') else 30
-                                    
-                                    # Try to download very short segments (1 second each)
-                                    time_points = range(0, min(int(duration), 180), skip_interval)  # Max 3 minutes
-                                    
-                                    for i, start_time in enumerate(time_points[:5]):  # Limit to 5 segments
-                                        segment_cmd = [
-                                            "yt-dlp",
-                                            "-f", "worst[height<=360]",
-                                            "--external-downloader", "ffmpeg",
-                                            "--external-downloader-args", f"-ss {start_time} -t 1",  # 1 second segment
-                                            "-o", str(Path(tmpdir) / f"segment_{i}.%(ext)s"),
-                                            st.session_state.youtube_url
-                                        ]
+                                    # Extract frames using cv2 directly from stream
+                                    cap = cv2.VideoCapture(stream_url)
+                                    if cap.isOpened():
+                                        frames_extracted = []
+                                        fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
+                                        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or int(duration * fps)
                                         
-                                        seg_result = subprocess.run(segment_cmd, capture_output=True, text=True, timeout=60)
-                                        if seg_result.returncode == 0:
-                                            # Look for downloaded segment
-                                            segments = list(Path(tmpdir).glob(f"segment_{i}.*"))
-                                            if segments:
-                                                # Extract first frame from segment
-                                                cap = cv2.VideoCapture(str(segments[0]))
-                                                if cap.isOpened():
-                                                    ret, frame = cap.read()
-                                                    if ret:
-                                                        frame_path = Path(tmpdir) / f"frame_{start_time}s.jpg"
-                                                        cv2.imwrite(str(frame_path), frame)
-                                                        frames_extracted.append((float(start_time), frame_path))
-                                                        st.info(f"✅ Extracted frame at {start_time}s")
-                                                    cap.release()
-                                        else:
-                                            st.warning(f"⚠️ Segment {i} failed: {seg_result.stderr[:50]}...")
-                                    
-                                    if frames_extracted:
-                                        st.success(f"✅ Extracted {len(frames_extracted)} frames from segments")
-                                        video_data = {
-                                            'frames': frames_extracted,
-                                            'fps': 1,
-                                            'duration': duration
-                                        }
-                                        video_path = video_data
-                                        download_success = True
-                                        break
+                                        # Sample frames at intervals
+                                        sample_interval = max(1, frame_count // 20)  # Get ~20 sample frames
+                                        
+                                        for frame_pos in range(0, frame_count, sample_interval):
+                                            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_pos)
+                                            ret, frame = cap.read()
+                                            if ret:
+                                                timestamp = frame_pos / fps
+                                                frame_path = Path(tmpdir) / f"frame_{timestamp:.1f}s.jpg"
+                                                cv2.imwrite(str(frame_path), frame)
+                                                frames_extracted.append((timestamp, frame_path))
+                                        
+                                        cap.release()
+                                        
+                                        if frames_extracted:
+                                            # Create a mock video object with frame data
+                                            video_data = {
+                                                'frames': frames_extracted,
+                                                'fps': fps,
+                                                'duration': duration
+                                            }
+                                            video_path = video_data
+                                            download_success = True
+                                            st.success(f"✅ Extracted {len(frames_extracted)} frames directly from stream!")
+                                            break
                                     else:
-                                        st.warning("⚠️ No segments could be downloaded")
+                                        st.warning("Stream URL obtained but couldn't open with OpenCV")
                                 else:
-                                    st.warning("⚠️ Could not get video duration info")
-                            except Exception as e:
-                                st.warning(f"⚠️ Strategy 3 error: {str(e)}")
+                                    st.warning("No stream URL found in video info")
+                            else:
+                                st.warning(f"Failed to get video info: {result.stderr[:100]}")
                             continue
                         
                         # Handle demo mode
