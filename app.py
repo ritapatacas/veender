@@ -325,7 +325,16 @@ elif st.session_state.processing:
                                 st.success(f"✅ Download successful with strategy {i+1}")
                                 break
                         else:
-                            st.warning(f"Strategy {i+1} failed: {result.stderr[:100]}...")
+                            error_msg = result.stderr.strip()
+                            st.warning(f"Strategy {i+1} failed: {error_msg[:200]}...")
+                            
+                            # Log detailed error information
+                            st.expander(f"🔍 Detailed error for strategy {i+1}", expanded=False).code(f"""
+Command: {' '.join(cmd)}
+Return code: {result.returncode}
+Error output: {error_msg}
+Standard output: {result.stdout.strip()}
+""")
                     except subprocess.TimeoutExpired:
                         st.warning(f"Strategy {i+1} timed out")
                     except Exception as e:
@@ -340,81 +349,76 @@ elif st.session_state.processing:
                     st.stop()
                 
                 progress_bar.progress(40)
+                
+                # Process video with face detection
+                status_text.text("Processing video frames with face detection...")
+                cap = cv2.VideoCapture(str(video_path))
+                
+                if not cap.isOpened():
+                    st.error("❌ Could not open video file")
+                    if st.button("🔄 Try Again", type="primary"):
+                        st.session_state.processing = False
+                        st.rerun()
+                    st.stop()
+                
+                fps = int(cap.get(cv2.CAP_PROP_FPS))
+                frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                
+                st.info(f"📹 Video info: {frame_count} frames, {fps} FPS")
+                
+                matches = []
+                frame_container = st.container()
+                
+                frame_number = 0
+                processed_frames = 0
+                total_frames_to_process = frame_count // st.session_state.skip
+                
+                while True:
+                    ret, frame = cap.read()
+                    if not ret:
+                        break
                     
-                    # Process video with face detection
-                    status_text.text("Processing video frames with face detection...")
-                    cap = cv2.VideoCapture(str(video_path))
-                    
-                    if not cap.isOpened():
-                        st.error("❌ Could not open video file")
-                        if st.button("🔄 Try Again", type="primary"):
-                            st.session_state.processing = False
-                            st.rerun()
-                        st.stop()
-                    
-                    fps = int(cap.get(cv2.CAP_PROP_FPS))
-                    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-                    
-                    st.info(f"📹 Video info: {frame_count} frames, {fps} FPS")
-                    
-                    matches = []
-                    frame_container = st.container()
-                    
-                    frame_number = 0
-                    processed_frames = 0
-                    total_frames_to_process = frame_count // st.session_state.skip
-                    
-                    while True:
-                        ret, frame = cap.read()
-                        if not ret:
-                            break
+                    if frame_number % st.session_state.skip == 0:
+                        # Extract features from current frame
+                        frame_features = extract_face_features(frame, face_cascade)
                         
-                        if frame_number % st.session_state.skip == 0:
-                            # Extract features from current frame
-                            frame_features = extract_face_features(frame, face_cascade)
-                            
-                            if frame_features is not None:
-                                # Compare with reference
-                                if compare_faces(ref_features, frame_features, st.session_state.tolerance):
-                                    timestamp = frame_number / fps
-                                    matches.append((timestamp, frame))
-                                    
-                                    # Display match immediately
-                                    with frame_container:
-                                        st.success(f"🎯 Match found at {timestamp:.1f}s!")
-                                        col1, col2 = st.columns([1, 3])
-                                        with col1:
-                                            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                                            st.image(frame_rgb, caption=f"Frame at {timestamp:.1f}s", use_container_width=True)
-                            
-                            processed_frames += 1
-                            progress = 40 + (processed_frames / total_frames_to_process) * 50
-                            progress_bar.progress(min(90, int(progress)))
-                            status_text.text(f"Processed {processed_frames}/{total_frames_to_process} frames...")
+                        if frame_features is not None:
+                            # Compare with reference
+                            if compare_faces(ref_features, frame_features, st.session_state.tolerance):
+                                timestamp = frame_number / fps
+                                matches.append((timestamp, frame))
+                                
+                                # Display match immediately
+                                with frame_container:
+                                    st.success(f"🎯 Match found at {timestamp:.1f}s!")
+                                    col1, col2 = st.columns([1, 3])
+                                    with col1:
+                                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                                        st.image(frame_rgb, caption=f"Frame at {timestamp:.1f}s", use_container_width=True)
                         
-                        frame_number += 1
+                        processed_frames += 1
+                        progress = 40 + (processed_frames / total_frames_to_process) * 50
+                        progress_bar.progress(min(90, int(progress)))
+                        status_text.text(f"Processed {processed_frames}/{total_frames_to_process} frames...")
                     
-                    cap.release()
-                    progress_bar.progress(100)
+                    frame_number += 1
+                
+                cap.release()
+                progress_bar.progress(100)
+                
+                # Show final results
+                if matches:
+                    st.success(f"✅ Found {len(matches)} matches!")
                     
-                    # Show final results
-                    if matches:
-                        st.success(f"✅ Found {len(matches)} matches!")
-                        
-                        # Display all matches
-                        st.subheader("🎯 All Matching Frames")
-                        cols = st.columns(min(4, len(matches)))
-                        for i, (timestamp, frame) in enumerate(matches):
-                            with cols[i % 4]:
-                                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                                st.image(frame_rgb, caption=f"{timestamp:.1f}s", use_container_width=True)
-                    else:
-                        st.warning("⚠️ No matches found. Try adjusting the tolerance or using different reference images.")
-                    
-                except subprocess.TimeoutExpired:
-                    st.error("❌ Video download timed out (5 minutes). Try a shorter video.")
-                except Exception as e:
-                    st.error(f"❌ Processing error: {str(e)}")
+                    # Display all matches
+                    st.subheader("🎯 All Matching Frames")
+                    cols = st.columns(min(4, len(matches)))
+                    for i, (timestamp, frame) in enumerate(matches):
+                        with cols[i % 4]:
+                            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                            st.image(frame_rgb, caption=f"{timestamp:.1f}s", use_container_width=True)
+                else:
+                    st.warning("⚠️ No matches found. Try adjusting the tolerance or using different reference images.")
         
         except Exception as e:
             st.error(f"❌ An error occurred: {str(e)}")
