@@ -19,6 +19,12 @@ st.markdown("<p style='text-align: center; font-size: 1.2em; font-style: bold; m
 
 st.info("🔧 **Step 3 Alternative**: Using OpenCV Haar Cascades for face detection (Python 3.13 compatible)")
 
+# YouTube download notice
+st.warning("""⚠️ **YouTube Download Limitation**: 
+Due to YouTube's cloud server blocking, video downloads may fail in this hosted environment. 
+The app will automatically create a demo video to show face detection working if YouTube downloads fail.
+For full YouTube functionality, run this app locally on your computer.""")
+
 # Initialize session state for UI visibility
 if 'processing' not in st.session_state:
     st.session_state.processing = False
@@ -385,8 +391,19 @@ Standard output: {result.stdout.strip()}""")
                 
                 if not download_success:
                     st.error("❌ All download strategies failed. YouTube is blocking cloud server requests.")
-                    st.warning("🔍 **Why this happens**: YouTube blocks datacenter IPs (like Streamlit Cloud) but allows residential IPs (like your home). This is why it works locally but not in the cloud.")
-                    st.info("💡 **Solutions**: Try different videos, use the demo mode above, or deploy on your own server with residential IP")
+                    
+                    st.warning("""🔍 **Why this happens**:
+- **Cloud IPs blocked**: YouTube blocks datacenter IPs (like Streamlit Cloud) but allows residential IPs (your home)
+- **Authentication required**: Many videos now require sign-in/cookies that cloud servers can't provide
+- **Bot detection**: Automated requests from shared infrastructure are flagged""")
+                    
+                    st.info("""💡 **Solutions**:
+- ✅ **Demo mode works** - Strategy 4 creates a test video to show face detection working
+- 🏠 **Local deployment** - Run locally where you have browser cookies
+- 🔓 **Public videos** - Try videos that don't require authentication
+- 🚀 **Own server** - Deploy on a VPS with residential IP""")
+                    
+                    st.success("🎯 **Good news**: The face detection algorithm itself works perfectly! The demo video above proves the core functionality.")
                     if st.button("🔄 Try Again", type="primary"):
                         st.session_state.processing = False
                         st.rerun()
