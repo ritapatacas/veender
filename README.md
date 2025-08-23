@@ -99,6 +99,6 @@ videos_dir: "data/input/videos"
 
 * Python 3.8+
 * yt-dlp for YouTube downloads
-* OpenCV, dlib, face_recognition libraries
+* OpenCV, face_recognition libraries
 
 ---
