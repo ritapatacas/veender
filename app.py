@@ -281,8 +281,10 @@ elif st.session_state.processing:
                 try:
                     cmd = [
                         "yt-dlp",
-                        "-f", "worst[ext=mp4]",  # Use worst quality for faster processing
-                        "-o", str(Path(tmpdir) / "video.%(ext)s"),
+                        "-f", "best[ext=mp4]",  # Use best quality like original
+                        "-o", str(Path(tmpdir) / "%(title)s.%(ext)s"),  # Use original filename pattern
+                        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",  # Avoid blocking
+                        "--extractor-retries", "3",  # Retry on failures
                         st.session_state.youtube_url
                     ]
                     
@@ -294,8 +296,8 @@ elif st.session_state.processing:
                             st.rerun()
                         st.stop()
                     
-                    # Find downloaded video
-                    video_files = list(Path(tmpdir).glob("video.*"))
+                    # Find downloaded video (now with dynamic filename)
+                    video_files = list(Path(tmpdir).glob("*.mp4"))
                     if not video_files:
                         st.error("❌ No video file found after download")
                         if st.button("🔄 Try Again", type="primary"):
