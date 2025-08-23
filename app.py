@@ -278,35 +278,68 @@ elif st.session_state.processing:
             # Download video
             status_text.text("Downloading video...")
             with tempfile.TemporaryDirectory() as tmpdir:
-                try:
-                    cmd = [
+                download_success = False
+                video_path = None
+                
+                # Try multiple download strategies
+                strategies = [
+                    # Strategy 1: Low quality with cookies
+                    [
                         "yt-dlp",
-                        "-f", "best[ext=mp4]",  # Use best quality like original
-                        "-o", str(Path(tmpdir) / "%(title)s.%(ext)s"),  # Use original filename pattern
-                        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",  # Avoid blocking
-                        "--extractor-retries", "3",  # Retry on failures
+                        "-f", "worst[height<=480]",
+                        "-o", str(Path(tmpdir) / "%(title)s.%(ext)s"),
+                        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                        "--extractor-retries", "3",
+                        "--no-check-certificate",
+                        st.session_state.youtube_url
+                    ],
+                    # Strategy 2: Audio only (if video fails)
+                    [
+                        "yt-dlp",
+                        "-f", "bestaudio[ext=m4a]",
+                        "-o", str(Path(tmpdir) / "%(title)s.%(ext)s"),
+                        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                        st.session_state.youtube_url
+                    ],
+                    # Strategy 3: Any format
+                    [
+                        "yt-dlp",
+                        "-f", "best",
+                        "-o", str(Path(tmpdir) / "%(title)s.%(ext)s"),
+                        "--user-agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                         st.session_state.youtube_url
                     ]
-                    
-                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-                    if result.returncode != 0:
-                        st.error(f"❌ Failed to download video: {result.stderr}")
-                        if st.button("🔄 Try Again", type="primary"):
-                            st.session_state.processing = False
-                            st.rerun()
-                        st.stop()
-                    
-                    # Find downloaded video (now with dynamic filename)
-                    video_files = list(Path(tmpdir).glob("*.mp4"))
-                    if not video_files:
-                        st.error("❌ No video file found after download")
-                        if st.button("🔄 Try Again", type="primary"):
-                            st.session_state.processing = False
-                            st.rerun()
-                        st.stop()
-                    
-                    video_path = video_files[0]
-                    progress_bar.progress(40)
+                ]
+                
+                for i, cmd in enumerate(strategies):
+                    try:
+                        status_text.text(f"Trying download strategy {i+1}/3...")
+                        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                        
+                        if result.returncode == 0:
+                            # Find downloaded file
+                            downloaded_files = list(Path(tmpdir).glob("*"))
+                            if downloaded_files:
+                                video_path = downloaded_files[0]
+                                download_success = True
+                                st.success(f"✅ Download successful with strategy {i+1}")
+                                break
+                        else:
+                            st.warning(f"Strategy {i+1} failed: {result.stderr[:100]}...")
+                    except subprocess.TimeoutExpired:
+                        st.warning(f"Strategy {i+1} timed out")
+                    except Exception as e:
+                        st.warning(f"Strategy {i+1} error: {str(e)}")
+                
+                if not download_success:
+                    st.error("❌ All download strategies failed. YouTube may be blocking requests.")
+                    st.info("💡 **Alternative**: Try a different YouTube video or check if the URL is accessible in your browser")
+                    if st.button("🔄 Try Again", type="primary"):
+                        st.session_state.processing = False
+                        st.rerun()
+                    st.stop()
+                
+                progress_bar.progress(40)
                     
                     # Process video with face detection
                     status_text.text("Processing video frames with face detection...")
