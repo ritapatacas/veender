@@ -5,3 +5,4 @@ yt-dlp>=2023.7.6
 tqdm>=4.66.0
 Pillow>=9.0.0
 PyYAML>=6.0
+requests>=2.31.0
