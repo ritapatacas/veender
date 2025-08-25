@@ -5,9 +5,8 @@ from pathlib import Path
 from PIL import Image
 from io import BytesIO
 import base64
-import tempfile
 
-NGROK_URL = "https://cda17b462672.ngrok-free.app/process_video"
+NGROK_URL = "https://d4447fc0533a.ngrok-free.app"
 
 st.set_page_config(page_title="VEENDER", page_icon="🎥", layout="wide")
 
