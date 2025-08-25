@@ -421,8 +421,9 @@ elif st.session_state.processing:
                                     st.success(f"✅ Video info: '{title}' ({duration}s)")
                                     
                                     frames_extracted = []
+                                    thumbnails = []  # Initialize empty list
                                     
-                                    # Strategy 2a: Extract main thumbnail
+                                    # Strategy 1a: Extract main thumbnail
                                     thumb_cmd = [
                                         "yt-dlp",
                                         "--write-thumbnail",
@@ -437,18 +438,28 @@ elif st.session_state.processing:
                                         if thumbnails:
                                             # Use main thumbnail as first frame
                                             frames_extracted.append((0.0, thumbnails[0]))
-                                            st.info(f"✅ Got main thumbnail")
+                                            st.info(f"✅ Got main thumbnail: {thumbnails[0].name}")
+                                        else:
+                                            st.warning("⚠️ Thumbnail command succeeded but no thumbnail file found")
+                                            st.info(f"📂 Checking directory: {list(Path(tmpdir).glob('*'))}")
+                                    else:
+                                        st.warning(f"⚠️ Thumbnail download failed: {thumb_result.stderr[:100]}")
+                                        with st.expander("🔍 Full thumbnail error details"):
+                                            st.code(f"Command: {' '.join(thumb_cmd)}")
+                                            st.code(f"Return code: {thumb_result.returncode}")
+                                            st.code(f"STDOUT: {thumb_result.stdout}")
+                                            st.code(f"STDERR: {thumb_result.stderr}")
                                     
-                                    # Strategy 2b: Try to get chapter thumbnails or additional previews
+                                    # Strategy 1b: Try to get chapter thumbnails or additional previews
                                     # Some videos have chapter markers with thumbnails
                                     chapters = video_info.get('chapters', [])
-                                    if chapters:
+                                    if chapters and thumbnails:
                                         st.info(f"✅ Found {len(chapters)} chapters - extracting chapter points")
                                         for i, chapter in enumerate(chapters[:10]):  # Limit to 10 chapters
                                             chapter_time = chapter.get('start_time', i * 30)
                                             frames_extracted.append((chapter_time, thumbnails[0]))  # Reuse main thumbnail with different timestamps
                                     
-                                    # Strategy 2c: Create comprehensive time points for thorough testing
+                                    # Strategy 1c: Create comprehensive time points for thorough testing
                                     if not chapters and thumbnails:
                                         st.info("📝 Creating comprehensive time points for face detection")
                                         # Create time points based on user's skip interval
@@ -489,7 +500,10 @@ elif st.session_state.processing:
                                         download_success = True
                                         break
                                     else:
-                                        st.warning("⚠️ No frames could be extracted")
+                                        if not thumbnails:
+                                            st.warning("⚠️ Strategy 1 failed: Could not download thumbnail")
+                                        else:
+                                            st.warning("⚠️ Strategy 1 failed: No time points could be created")
                                         
                                 except json.JSONDecodeError:
                                     st.error("❌ Could not parse video info JSON")
