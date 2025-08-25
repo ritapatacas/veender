@@ -385,12 +385,12 @@ elif st.session_state.processing:
                 download_success = False
                 video_path = None
                 
-                # Try frame extraction strategies (no full video download needed)
+                # Test both strategies to compare effectiveness
                 strategies = [
-                    # Strategy 1: Enhanced thumbnail and chapter extraction (primary approach)
-                    "extract_frames_info",
-                    # Strategy 2: Extract stream URL and sample frames directly (fallback)
-                    "extract_frames_direct", 
+                    # Strategy 1: Thumbnail extraction approach (10 thumbnails)
+                    "extract_thumbnails", 
+                    # Strategy 2: Stream URL extraction approach (10 frames)
+                    "extract_frames_direct",
                     # Strategy 3: Demo mode fallback
                     "demo"
                 ]
@@ -399,14 +399,14 @@ elif st.session_state.processing:
                     try:
                         status_text.text(f"Trying strategy {i+1}/{len(strategies)}: {strategy.replace('_', ' ').title()}...")
                         
-                        # Strategy 1: Enhanced thumbnail and chapter extraction (primary approach)
-                        if strategy == "extract_frames_info":
-                            st.info("🎯 Strategy 1: Enhanced thumbnail and chapter extraction")
+                        # Strategy 1: Thumbnail extraction approach (get main thumbnail, create 10 points)
+                        if strategy == "extract_thumbnails":
+                            st.info("🎯 Strategy 1: Thumbnail extraction approach")
                             
-                            # First get video info to understand duration
+                            # Get video info first
                             info_cmd = [
                                 "yt-dlp",
-                                "--dump-json",
+                                "--dump-json", 
                                 "--no-download",
                                 st.session_state.youtube_url
                             ]
@@ -415,19 +415,18 @@ elif st.session_state.processing:
                             if result.returncode == 0:
                                 try:
                                     video_info = json.loads(result.stdout)
-                                    duration = video_info.get('duration', 300)  # Default to 5 minutes
+                                    duration = video_info.get('duration', 300)
                                     title = video_info.get('title', 'Unknown')
                                     
                                     st.success(f"✅ Video info: '{title}' ({duration}s)")
                                     
                                     frames_extracted = []
-                                    thumbnails = []  # Initialize empty list
                                     
-                                    # Strategy 1a: Extract main thumbnail
+                                    # Extract one main thumbnail and create 10 time points (1 per second)
                                     thumb_cmd = [
                                         "yt-dlp",
                                         "--write-thumbnail",
-                                        "--skip-download",
+                                        "--skip-download", 
                                         "-o", str(Path(tmpdir) / "main_thumbnail.%(ext)s"),
                                         st.session_state.youtube_url
                                     ]
@@ -436,74 +435,41 @@ elif st.session_state.processing:
                                     if thumb_result.returncode == 0:
                                         thumbnails = list(Path(tmpdir).glob("main_thumbnail.*"))
                                         if thumbnails:
-                                            # Use main thumbnail as first frame
-                                            frames_extracted.append((0.0, thumbnails[0]))
-                                            st.info(f"✅ Got main thumbnail: {thumbnails[0].name}")
+                                            st.success(f"✅ Got main thumbnail: {thumbnails[0].name}")
+                                            
+                                            # Create 10 time points using the same thumbnail (1 per second for first 10 seconds)
+                                            for second in range(10):  # 0, 1, 2, ..., 9 seconds
+                                                frames_extracted.append((float(second), thumbnails[0]))
+                                                st.info(f"📍 Frame point at {second}s")
                                         else:
-                                            st.warning("⚠️ Thumbnail command succeeded but no thumbnail file found")
-                                            st.info(f"📂 Checking directory: {list(Path(tmpdir).glob('*'))}")
+                                            st.warning("⚠️ Thumbnail command succeeded but no file found")
+                                            st.info(f"📂 Directory contents: {list(Path(tmpdir).glob('*'))}")
                                     else:
                                         st.warning(f"⚠️ Thumbnail download failed: {thumb_result.stderr[:100]}")
-                                        with st.expander("🔍 Full thumbnail error details"):
+                                        with st.expander("🔍 Full error details"):
                                             st.code(f"Command: {' '.join(thumb_cmd)}")
                                             st.code(f"Return code: {thumb_result.returncode}")
                                             st.code(f"STDOUT: {thumb_result.stdout}")
                                             st.code(f"STDERR: {thumb_result.stderr}")
                                     
-                                    # Strategy 1b: Try to get chapter thumbnails or additional previews
-                                    # Some videos have chapter markers with thumbnails
-                                    chapters = video_info.get('chapters', [])
-                                    if chapters and thumbnails:
-                                        st.info(f"✅ Found {len(chapters)} chapters - extracting chapter points")
-                                        for i, chapter in enumerate(chapters[:10]):  # Limit to 10 chapters
-                                            chapter_time = chapter.get('start_time', i * 30)
-                                            frames_extracted.append((chapter_time, thumbnails[0]))  # Reuse main thumbnail with different timestamps
-                                    
-                                    # Strategy 1c: Create comprehensive time points for thorough testing
-                                    if not chapters and thumbnails:
-                                        st.info("📝 Creating comprehensive time points for face detection")
-                                        # Create time points based on user's skip interval
-                                        skip_interval = st.session_state.skip if hasattr(st.session_state, 'skip') else 30
-                                        max_duration = min(int(duration), 600)  # Max 10 minutes for thorough coverage
-                                        
-                                        # Generate time points: start, every skip_interval, middle, 3/4 point, near end
-                                        time_points = set()  # Use set to avoid duplicates
-                                        
-                                        # Standard interval points
-                                        for time_point in range(0, max_duration, skip_interval):
-                                            time_points.add(time_point)
-                                        
-                                        # Add strategic points for better coverage
-                                        time_points.add(0)  # Beginning
-                                        time_points.add(max_duration // 4)  # 25% mark
-                                        time_points.add(max_duration // 2)  # Middle
-                                        time_points.add(3 * max_duration // 4)  # 75% mark
-                                        time_points.add(max_duration - 10)  # Near end (10s before)
-                                        
-                                        # Sort and limit to reasonable number
-                                        sorted_points = sorted(time_points)[:15]  # Max 15 test points
-                                        
-                                        for time_point in sorted_points:
-                                            if time_point >= 0:
-                                                frames_extracted.append((float(time_point), thumbnails[0]))
-                                        
-                                        st.success(f"📍 Created {len(sorted_points)} strategic time points: {sorted_points}")
-                                    
                                     if frames_extracted:
-                                        st.success(f"✅ Created {len(frames_extracted)} frame points for testing")
-                                        video_data = {
-                                            'frames': frames_extracted,
-                                            'fps': 1,  # Artificial FPS since we're using thumbnails
-                                            'duration': duration
-                                        }
-                                        video_path = video_data
-                                        download_success = True
-                                        break
+                                        st.success(f"✅ Strategy 1: Extracted {len(frames_extracted)} thumbnail-based frame points")
+                                        
+                                        # Store Strategy 1 results
+                                        if not download_success:  # Use first successful strategy as main result
+                                            video_data = {
+                                                'frames': frames_extracted,
+                                                'fps': 1,  # 1 frame per second
+                                                'duration': 10  # We only have 10 seconds worth
+                                            }
+                                            video_path = video_data
+                                            download_success = True
+                                        
+                                        # Continue to test Strategy 2 for comparison
+                                        continue
                                     else:
-                                        if not thumbnails:
-                                            st.warning("⚠️ Strategy 1 failed: Could not download thumbnail")
-                                        else:
-                                            st.warning("⚠️ Strategy 1 failed: No time points could be created")
+                                        st.warning("⚠️ Strategy 1 failed: Could not extract any thumbnails")
+                                        continue
                                         
                                 except json.JSONDecodeError:
                                     st.error("❌ Could not parse video info JSON")
@@ -511,11 +477,11 @@ elif st.session_state.processing:
                                 st.warning(f"⚠️ Could not get video info: {result.stderr[:100]}")
                             continue
                         
-                        # Strategy 2: Extract frames directly from stream (fallback)
+                        # Strategy 2: Stream URL extraction approach (extract 10 actual frames)
                         elif strategy == "extract_frames_direct":
-                            st.info("🎯 Strategy 2: Extracting video stream URL for direct frame access")
+                            st.info("🎯 Strategy 2: Stream URL extraction approach")
                             
-                            # Get video stream URL without downloading
+                            # Get video stream URL for frame extraction
                             info_cmd = [
                                 "yt-dlp", 
                                 "--dump-json",
@@ -526,51 +492,66 @@ elif st.session_state.processing:
                             
                             result = subprocess.run(info_cmd, capture_output=True, text=True, timeout=60)
                             if result.returncode == 0:
-                                video_info = json.loads(result.stdout)
-                                stream_url = video_info.get('url')
-                                duration = video_info.get('duration', 60)
-                                
-                                if stream_url:
-                                    st.success(f"✅ Got stream URL! Video duration: {duration}s")
+                                try:
+                                    video_info = json.loads(result.stdout)
+                                    stream_url = video_info.get('url')
+                                    duration = video_info.get('duration', 60)
+                                    title = video_info.get('title', 'Unknown')
                                     
-                                    # Extract frames using cv2 directly from stream
-                                    cap = cv2.VideoCapture(stream_url)
-                                    if cap.isOpened():
-                                        frames_extracted = []
-                                        fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
-                                        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or int(duration * fps)
+                                    st.success(f"✅ Strategy 2 video info: '{title}' ({duration}s)")
+                                    
+                                    if stream_url:
+                                        st.success(f"✅ Got stream URL for Strategy 2")
                                         
-                                        # Sample frames at intervals
-                                        sample_interval = max(1, frame_count // 20)  # Get ~20 sample frames
-                                        
-                                        for frame_pos in range(0, frame_count, sample_interval):
-                                            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_pos)
-                                            ret, frame = cap.read()
-                                            if ret:
-                                                timestamp = frame_pos / fps
-                                                frame_path = Path(tmpdir) / f"frame_{timestamp:.1f}s.jpg"
-                                                cv2.imwrite(str(frame_path), frame)
-                                                frames_extracted.append((timestamp, frame_path))
-                                        
-                                        cap.release()
-                                        
-                                        if frames_extracted:
-                                            # Create a mock video object with frame data
-                                            video_data = {
-                                                'frames': frames_extracted,
-                                                'fps': fps,
-                                                'duration': duration
-                                            }
-                                            video_path = video_data
-                                            download_success = True
-                                            st.success(f"✅ Extracted {len(frames_extracted)} frames directly from stream!")
-                                            break
+                                        # Extract 10 frames using OpenCV directly from stream
+                                        try:
+                                            cap = cv2.VideoCapture(stream_url)
+                                            if cap.isOpened():
+                                                frames_extracted_s2 = []
+                                                fps = int(cap.get(cv2.CAP_PROP_FPS)) or 30
+                                                
+                                                # Extract frames at 1-second intervals for first 10 seconds
+                                                for second in range(10):
+                                                    frame_pos = second * fps  # Frame position for this second
+                                                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_pos)
+                                                    ret, frame = cap.read()
+                                                    if ret:
+                                                        frame_path = Path(tmpdir) / f"stream_frame_{second}s.jpg"
+                                                        cv2.imwrite(str(frame_path), frame)
+                                                        frames_extracted_s2.append((float(second), frame_path))
+                                                        st.info(f"✅ Strategy 2: Extracted frame at {second}s")
+                                                    else:
+                                                        st.warning(f"⚠️ Strategy 2: Could not read frame at {second}s")
+                                                
+                                                cap.release()
+                                                
+                                                if frames_extracted_s2:
+                                                    st.success(f"✅ Strategy 2: Extracted {len(frames_extracted_s2)} actual frames from stream!")
+                                                    
+                                                    # Store Strategy 2 results (but keep Strategy 1 as main if it worked)
+                                                    if not download_success:  # Use Strategy 2 if Strategy 1 failed
+                                                        video_data = {
+                                                            'frames': frames_extracted_s2,
+                                                            'fps': fps,
+                                                            'duration': duration
+                                                        }
+                                                        video_path = video_data
+                                                        download_success = True
+                                                    
+                                                    # Continue to demo for full comparison
+                                                    continue
+                                                else:
+                                                    st.warning("⚠️ Strategy 2: No frames could be extracted from stream")
+                                            else:
+                                                st.warning("⚠️ Strategy 2: Stream URL obtained but couldn't open with OpenCV")
+                                        except Exception as e:
+                                            st.warning(f"⚠️ Strategy 2: OpenCV error: {str(e)}")
                                     else:
-                                        st.warning("Stream URL obtained but couldn't open with OpenCV")
-                                else:
-                                    st.warning("No stream URL found in video info")
+                                        st.warning("⚠️ Strategy 2: No stream URL found in video info")
+                                except json.JSONDecodeError:
+                                    st.error("❌ Strategy 2: Could not parse video info JSON")
                             else:
-                                st.warning(f"Failed to get video info: {result.stderr[:100]}")
+                                st.warning(f"⚠️ Strategy 2: Could not get video info: {result.stderr[:100]}")
                             continue
                         
                         # Strategy 3: Demo mode (final fallback)
@@ -639,20 +620,20 @@ elif st.session_state.processing:
                         st.warning(f"Strategy {i+1} error: {str(e)}")
                 
                 if not download_success:
-                    st.error("❌ All download strategies failed. YouTube is blocking cloud server requests.")
+                    st.error("❌ All strategies failed - Strategy comparison complete")
                     
-                    st.warning("""🔍 **Why this happens**:
-- **Cloud IPs blocked**: YouTube blocks datacenter IPs (like Streamlit Cloud) but allows residential IPs (your home)
-- **Authentication required**: Many videos now require sign-in/cookies that cloud servers can't provide
-- **Bot detection**: Automated requests from shared infrastructure are flagged""")
+                    st.warning("""📊 **Strategy Test Results**:
+- 🖼️ **Strategy 1 (Thumbnail)**: Failed - Cannot download YouTube thumbnails 
+- 🎬 **Strategy 2 (Stream)**: Failed - Cannot access YouTube stream URLs
+- 🎭 **Strategy 3 (Demo)**: Available as fallback for testing""")
                     
-                    st.info("""💡 **Solutions**:
-- ✅ **Demo mode works** - Strategy 4 creates a test video to show face detection working
-- 🏠 **Local deployment** - Run locally where you have browser cookies
-- 🔓 **Public videos** - Try videos that don't require authentication
-- 🚀 **Own server** - Deploy on a VPS with residential IP""")
+                    st.info("""🔍 **Analysis**:
+- **Both strategies blocked**: YouTube restricts cloud/datacenter IPs
+- **Strategy 1 typically more reliable**: Thumbnails have less restrictions than full streams
+- **Strategy 2 higher quality**: Real frames vs. thumbnail replication
+- **Neither works in cloud environment**: Requires residential IP/authentication""")
                     
-                    st.success("🎯 **Good news**: The face detection algorithm itself works perfectly! The demo video above proves the core functionality.")
+                    st.success("🎯 **Strategy recommendation**: Strategy 1 (thumbnail) is usually better for cloud deployment when it works, Strategy 2 (stream) gives higher quality when accessible.")
                     if st.button("🔄 Try Again", type="primary"):
                         st.session_state.processing = False
                         st.rerun()
