@@ -1,52 +1,14 @@
+[project]
+name = "veender-streamlit-frontend"
+version = "1.0.0"
+description = "Frontend Streamlit for VEENDER"
+requires-python = ">=3.8"
+dependencies = [
+    "streamlit>=1.25.0",
+    "requests>=2.31.0",
+    "pillow>=10.0.0"
+]
+
 [build-system]
 requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
-
-[project]
-name = "veender-face-video-finder"
-version = "1.0.0"
-description = "A face video finder tool to detect faces in videos and extract matching frames"
-readme = "README.md"
-requires-python = ">=3.8"
-license = {text = "MIT"}
-authors = [
-    {name = "Rita Patacas", email = "your.email@example.com"},
-]
-keywords = ["face-recognition", "video", "opencv", "youtube", "face-detection"]
-classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "Topic :: Multimedia :: Video",
-    "Topic :: Scientific/Engineering :: Image Recognition",
-    "Topic :: Software Development :: Libraries :: Python Modules",
-]
-dependencies = [
-    "numpy>=1.24",
-    "opencv-python>=4.12",
-    "face_recognition>=1.3",
-    "yt-dlp>=2025.1.15",
-    "tqdm>=4.66",
-    "pyyaml>=6.0",
-]
-
-[project.urls]
-Homepage = "https://github.com/ritapatacas/veender"
-Repository = "https://github.com/ritapatacas/veender"
-Issues = "https://github.com/ritapatacas/veender/issues"
-Documentation = "https://github.com/ritapatacas/veender#readme"
-
-[project.scripts]
-veender = "src.main:main"
-
-[project.optional-dependencies]
-models = ["face_recognition_models @ git+https://github.com/ageitgey/face_recognition_models"]
-dev = ["build", "twine", "pytest"]
