@@ -1,4 +1,0 @@
-libjpeg-dev
-zlib1g-dev
-libpng-dev
-ffmpeg
