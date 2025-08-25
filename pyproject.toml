@@ -1,13 +1,16 @@
-[project]
-name = "veender-streamlit-frontend"
-version = "1.0.0"
-description = "Frontend Streamlit for VEENDER"
-requires-python = ">=3.8"
-dependencies = [
-    "streamlit>=1.25.0",
-    "requests>=2.31.0",
-    "pillow<10"
-
 [build-system]
 requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "veender-frontend"
+version = "1.0.0"
+description = "Frontend Streamlit for VEENDER"
+requires-python = ">=3.8"
+license = {text = "MIT"}
+authors = [{name = "Rita Patacas"}]
+
+dependencies = [
+    "streamlit==1.25.0",
+    "requests>=2.31.0"
+]
