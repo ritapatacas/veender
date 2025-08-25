@@ -1,66 +1,98 @@
+# app.py
 import streamlit as st
-import subprocess
-import tempfile
+import requests
 from pathlib import Path
 from PIL import Image
+from io import BytesIO
+import base64
+import tempfile
 
-st.set_page_config(page_title="YouTube Frame Extractor (FFmpeg)", page_icon="🎥", layout="wide")
-st.title("YouTube Frame Extractor (FFmpeg Version)")
+NGROK_URL = "https://cda17b462672.ngrok-free.app/process_video"
 
-youtube_url = st.text_input("YouTube link", placeholder="https://youtube.com/watch?v=...")
+st.set_page_config(page_title="VEENDER", page_icon="🎥", layout="wide")
 
-if st.button("🎬 Extract 10 Frames"):
-    if not youtube_url:
-        st.error("⚠️ Please provide a YouTube link.")
-    else:
-        st.info("Fetching video and extracting frames using ffmpeg...")
+st.markdown("<h1 style='text-align: center;'>VEENDER</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; font-style: italic; margin: 0;'>been there?</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; font-size: 1.2em; font-style: bold; margin: 0;'>self stalker - find yourself in a video</b></p>", unsafe_allow_html=True)
+
+# Initialize session state
+if 'processing' not in st.session_state:
+    st.session_state.processing = False
+
+input_container = st.container()
+processing_container = st.container()
+
+if not st.session_state.processing:
+    with input_container:
+        st.write("Upload face images and a YouTube link.")
+
+        # Upload faces
+        face_files = st.file_uploader(
+            "📸 Face images",
+            type=["jpg", "jpeg", "png"],
+            accept_multiple_files=True,
+            help="Upload up to 5 reference face images"
+        )
+        if face_files and len(face_files) > 5:
+            st.warning("⚠️ Maximum of 5 face images allowed.")
+            face_files = face_files[:5]
+
+        # YouTube URL
+        youtube_url = st.text_input("🎬 YouTube link", placeholder="https://youtube.com/watch?v=...")
+
+        # Sliders
+        col1, col2 = st.columns(2)
+        with col1:
+            skip = st.slider("⏭️ Frame skip", min_value=1, max_value=200, value=30)
+        with col2:
+            tolerance = st.slider("🎯 Match tolerance", min_value=0.1, max_value=1.0, value=0.5)
+
+        if st.button("🚀 RUN VEENDER"):
+            if not face_files:
+                st.error("⚠️ Please upload at least one face image.")
+            elif not youtube_url:
+                st.error("⚠️ Please paste a YouTube link.")
+            else:
+                st.session_state.processing = True
+                st.session_state.face_files = face_files
+                st.session_state.youtube_url = youtube_url
+                st.session_state.skip = skip
+                st.session_state.tolerance = tolerance
+                st.rerun()
+
+elif st.session_state.processing:
+    with processing_container:
+        st.info("🔄 Sending data to backend...")
+
+        # Prepare files and payload
+        files_payload = []
+        for f in st.session_state.face_files:
+            files_payload.append(('faces', (f.name, f.read(), f.type)))
+
+        payload = {
+            'url': st.session_state.youtube_url,
+            'skip': st.session_state.skip,
+            'tolerance': st.session_state.tolerance
+        }
+
         try:
-            # Create a temporary directory to store frames
-            with tempfile.TemporaryDirectory() as tmpdir:
-                tmp_path = Path(tmpdir)
+            response = requests.post(NGROK_URL, data=payload, files=files_payload, timeout=600)
+            data = response.json()
 
-                # Command: yt-dlp + ffmpeg directly extract 10 frames (1 per second)
-                # First, get the direct URL
-                cmd_url = ["yt-dlp", "-g", "-f", "worst[ext=mp4]", youtube_url]
-                result = subprocess.run(cmd_url, capture_output=True, text=True, timeout=60)
-                if result.returncode != 0:
-                    st.error(f"❌ Failed to get video URL: {result.stderr}")
-                    st.stop()
+            if "error" in data:
+                st.error(f"❌ Backend error: {data['error']}")
+            else:
+                st.success(f"✅ {data['message']}")
+                frames = data["frames"]
+                cols = st.columns(5)
+                for i, frame_b64 in enumerate(frames):
+                    img = Image.open(BytesIO(base64.b64decode(frame_b64)))
+                    with cols[i % 5]:
+                        st.image(img, use_container_width=True, caption=f"Frame {i+1}")
 
-                direct_url = result.stdout.strip()
-                st.write("Direct video URL obtained.")
-
-                # Now extract 10 frames with ffmpeg at 1 fps
-                output_pattern = str(tmp_path / "frame_%03d.jpg")
-                ffmpeg_cmd = [
-                    "ffmpeg",
-                    "-i", direct_url,
-                    "-vf", "fps=1,select=lt(n\,10)",  # 1 fps, limit to first 10 frames
-                    "-vsync", "vfr",
-                    "-q:v", "2",
-                    output_pattern
-                ]
-
-                ffmpeg_res = subprocess.run(ffmpeg_cmd, capture_output=True, text=True, timeout=120)
-                if ffmpeg_res.returncode != 0:
-                    st.error(f"❌ ffmpeg failed: {ffmpeg_res.stderr}")
-                    st.stop()
-
-                frames = sorted(tmp_path.glob("frame_*.jpg"))
-                if not frames:
-                    st.warning("No frames were extracted. Possibly a protected or inaccessible stream.")
-                else:
-                    st.success(f"Extracted {len(frames)} frames!")
-                    cols = st.columns(min(5, len(frames)))
-                    for i, frame_file in enumerate(frames):
-                        img = Image.open(frame_file)
-                        with cols[i % 5]:
-                            st.image(img, caption=f"Frame {i+1}", use_container_width=True)
-
-        except subprocess.TimeoutExpired:
-            st.error("❌ Operation timed out.")
         except Exception as e:
-            st.error(f"❌ Unexpected error: {e}")
+            st.error(f"❌ Request failed: {e}")
 
-st.markdown("---")
-st.markdown("**Powered by yt-dlp + ffmpeg**")
+        if st.button("🔄 Process Another Video"):
+            st.session_state.processing = False
+            st.rerun()
